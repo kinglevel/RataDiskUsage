@@ -1,0 +1,1171 @@
+<title>RataDiskUsage</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+/* Layout: the terminal is the page. One stage first, then a short ledger of what was borrowed from where. */
+:root {
+  --bg: #f3f1f6;
+  --surface: #fbfafc;
+  --fg: #1d1826;
+  --muted: #645d73;
+  --rule: #d8d2e2;
+  --accent: #5a3691;
+  /* The terminal keeps one look in both themes, like a real terminal window would. */
+  --term-bg: #17131f;
+  --term-edge: #2f2839;
+  --term-squash: #f0c35a;
+  --font-display: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0c15; --surface: #1a1622; --fg: #e9e4f2; --muted: #a49cb5; --rule: #2f2839; --accent: #f0c35a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f0c15; --surface: #1a1622; --fg: #e9e4f2; --muted: #a49cb5; --rule: #2f2839; --accent: #f0c35a;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.page {
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+.top { display: flex; flex-direction: column; gap: 8px; }
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0;
+  text-wrap: balance;
+}
+.lede { margin: 0; max-width: 65ch; color: var(--muted); }
+h2 {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-display); font-size: 0.875em; }
+
+/* Stage */
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.stage-bar {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: space-between;
+  font-size: 0.8125rem; color: var(--muted);
+}
+.term {
+  background: var(--term-bg);
+  border: 1px solid var(--term-edge);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  outline: none;
+  cursor: default;
+}
+.term:focus { border-color: var(--term-squash); box-shadow: 0 0 0 2px var(--term-squash); }
+.term canvas { display: block; max-width: 100%; }
+.keys { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.keys button {
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  min-width: 2.5rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+.keys button:hover { border-color: var(--accent); }
+.keys button:active { transform: translateY(1px); }
+.keys button:disabled { opacity: 0.38; cursor: default; border-color: var(--rule); }
+.keys button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.keys .sep { width: 10px; }
+.hint { margin: 0; font-size: 0.8125rem; color: var(--muted); max-width: 75ch; }
+
+/* Ledger */
+.sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 28px 32px; }
+.src { min-width: 0; }
+.src h3 { font-family: var(--font-display); font-size: 0.9375rem; font-weight: 700; margin: 0 0 2px; }
+.src .took {
+  margin: 0 0 8px;
+  font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--accent);
+}
+.src p { margin: 0; font-size: 0.9375rem; }
+.src .meta { margin-top: 8px; font-family: var(--font-display); font-size: 0.75rem; color: var(--muted); }
+
+.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 36px 44px; }
+.split > * { min-width: 0; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+th, td { text-align: left; padding: 7px 14px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+td.k { font-family: var(--font-display); font-size: 0.8125rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+ul.plain { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 6px; max-width: 70ch; }
+.note { margin: 0; max-width: 70ch; }
+</style>
+
+<div class="page">
+  <header class="top">
+    <h1>RataDiskUsage</h1>
+    <p class="lede">A working mockup of the terminal app. It combines diskonaut's navigation, darya's file browser, diskbloom's file types, and excise's layout and motion on one screen.</p>
+  </header>
+
+  <section class="stage" aria-label="Interactive mockup">
+    <div class="stage-bar">
+      <span>Sample data, <span id="sample-size">about 170G</span>. Nothing on your disk is read or deleted.</span>
+      <span id="kbd-state">Click the terminal to use the keyboard</span>
+    </div>
+    <div id="term" class="term" tabindex="0" role="application"
+         aria-label="RataDiskUsage terminal mockup. Arrow keys move, Enter opens a folder, Escape goes up, Tab switches pane, Shift+Tab leaves the terminal.">
+      <canvas id="screen" aria-hidden="true"></canvas>
+    </div>
+    <div class="keys" role="group" aria-label="On-screen keys">
+      <button type="button" id="key-left" data-k="ArrowLeft" aria-label="Left">←</button>
+      <button type="button" id="key-down" data-k="ArrowDown" aria-label="Down">↓</button>
+      <button type="button" id="key-up" data-k="ArrowUp" aria-label="Up">↑</button>
+      <button type="button" id="key-right" data-k="ArrowRight" aria-label="Right">→</button>
+      <span class="sep"></span>
+      <button type="button" id="key-enter" data-k="Enter">Enter</button>
+      <button type="button" id="key-esc" data-k="Escape">Esc</button>
+      <button type="button" id="key-tab" data-k="Tab">Tab</button>
+      <button type="button" id="key-bksp" data-k="Backspace">Bksp</button>
+      <button type="button" id="key-r" data-k="r">r</button>
+      <button type="button" id="key-help" data-k="?">?</button>
+      <span class="sep"></span>
+      <button type="button" id="key-y" data-k="y" disabled>y</button>
+      <button type="button" id="key-n" data-k="n" disabled>n</button>
+    </div>
+    <p class="hint">Press <code>r</code> to replay the scan. Click a tile or a row to select it, and click it again to open it. Motion follows your system's reduced-motion setting.</p>
+  </section>
+
+  <section>
+    <h2>Where each part comes from</h2>
+    <div class="sources">
+      <div class="src">
+        <h3><a href="https://github.com/imsnif/diskonaut">diskonaut</a></h3>
+        <p class="took">Navigation</p>
+        <p>Arrow keys or <code>hjkl</code> move between tiles by position. Enter opens the selected folder, Esc returns to the parent, and Backspace asks before deleting. Entries too small to draw are grouped into one hatched tile.</p>
+        <p class="meta">Rust · tui 0.11 · MIT · last release 2020</p>
+      </div>
+      <div class="src">
+        <h3><a href="https://github.com/mrkatebzadeh/darya">darya</a></h3>
+        <p class="took">File browser</p>
+        <p>A tree with one row per entry: share bar, percentage and size. Right expands a folder in place and Left collapses it. Details of the selected entry sit in their own panel.</p>
+        <p class="meta">Rust · ratatui 0.30 · GPL-3.0</p>
+      </div>
+      <div class="src">
+        <h3><a href="https://github.com/Zingzy/diskbloom">diskbloom</a></h3>
+        <p class="took">File types</p>
+        <p>Each extension gets a hue, ranked by total size and stepped by the golden angle (137.5°) so the largest types sit far apart. Folders take the colour of their largest type, and bigger shares are brighter. Folder tiles show their contents as a nested mosaic.</p>
+        <p class="meta">Go · Bubble Tea · Apache-2.0</p>
+      </div>
+      <div class="src">
+        <h3><a href="https://github.com/findyourexit/excise">excise</a></h3>
+        <p class="took">Layout and motion</p>
+        <p>A header band with a status chip, titled panes, an inspector for the selected item, and key hints on the last line. Tiles glide to new positions, the map zooms on drill in and out, a sheen crosses the selected tile once, and deleted tiles dissolve.</p>
+        <p class="meta">Rust · ratatui 0.30 + tachyonfx · MIT</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="split">
+    <div>
+      <h2>How the parts were joined</h2>
+      <ul class="plain">
+        <li>The map and the file list share one selection. Moving in either pane moves the highlight in the other.</li>
+        <li>The map shows the current folder two levels deep. The file list can expand deeper, and a row selected there is outlined inside its parent tile.</li>
+        <li>Small entries cannot be selected on the map, as in diskonaut. They stay reachable in the file list.</li>
+        <li>Tiles are filled like excise's, but coloured by file type like diskbloom's. excise colours tiles by size alone.</li>
+        <li>The type legend covers the current folder and marks the type of the selected entry.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Motion timings</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Moment</th><th>Duration</th></tr></thead>
+          <tbody>
+            <tr><td>Layout settles after a resize or scan batch</td><td class="k">160 ms</td></tr>
+            <tr><td>Drill in or out</td><td class="k">260 ms</td></tr>
+            <tr><td>First tiles appear during a scan</td><td class="k">280 ms</td></tr>
+            <tr><td>Sheen on the selected tile, one pass after the last key</td><td class="k">3.2 s</td></tr>
+            <tr><td>Header flash on completion or deletion</td><td class="k">240 ms</td></tr>
+            <tr><td>Deleted tile dissolves</td><td class="k">340 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:10px">All but the dissolve are the values in excise's <code>animation.rs</code>. excise redraws every 33 ms while something moves and sleeps otherwise.</p>
+    </div>
+  </section>
+
+  <section class="split">
+    <div>
+      <h2>Keys</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Key</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td class="k">arrows / hjkl</td><td>Move between tiles, or between rows in the file list</td></tr>
+            <tr><td class="k">Enter</td><td>Open the selected folder</td></tr>
+            <tr><td class="k">Esc</td><td>Go up to the parent folder</td></tr>
+            <tr><td class="k">Tab</td><td>Switch between the map and the file list</td></tr>
+            <tr><td class="k">→ / ←</td><td>Expand or collapse a folder in the file list</td></tr>
+            <tr><td class="k">Bksp or d</td><td>Delete, after a y/n confirmation</td></tr>
+            <tr><td class="k">r</td><td>Rescan the current folder</td></tr>
+            <tr><td class="k">?</td><td>Show the key list</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>Left out of the mockup</h2>
+      <ul class="plain">
+        <li>Filtering with <code>/</code> (excise, darya).</li>
+        <li>Zoom with <code>+</code> <code>-</code> <code>0</code>, which hides the largest entries so small ones grow (diskonaut, excise).</li>
+        <li>Sort modes and switching between bytes and percentages (darya).</li>
+        <li>Exporting and importing a scan (darya, excise).</li>
+        <li>Themes (excise) and a Trash option next to permanent delete (diskbloom).</li>
+      </ul>
+      <h2 style="margin-top:28px">Licences</h2>
+      <p class="note">diskonaut and excise are MIT, diskbloom is Apache-2.0, and darya is GPL-3.0. The mockup borrows ideas only. Porting code from darya would make RataDiskUsage GPL-3.0 as well.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- constants ----------
+const MB = 1048576, GB = 1073741824;
+const SHEEN = 3200, T_ROUTINE = 160, T_NAV = 260, T_REVEAL = 280, T_FLASH = 240, T_DISSOLVE = 340;
+const FONT = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const C = {
+  bg: 0x17131f, lift: 0x221c2d, fg: 0xe9e4f2, soft: 0xc3bcd1, dim: 0x8f879f, faint: 0x51495f,
+  border: 0x3d364b, track: 0x262031, muted: 0x2f2839, ink: 0x17131f, white: 0xffffff,
+  squash: 0xf0c35a, green: 0x9ed88c, red: 0xf2806f
+};
+
+// ---------- sample data ----------
+function rng(seed) {
+  return () => {
+    seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rnd = rng(11);
+const F = (name, mb) => ({ name, size: Math.max(1, Math.round(mb * MB)) });
+const D = (name, ...kids) => ({ name, kids: kids.flat() });
+const many = (n, pre, ext, lo, hi, pad = 3) => Array.from({ length: n }, (_, i) =>
+  F(pre + String(i + 1).padStart(pad, '0') + '.' + ext, lo + (hi - lo) * rnd() ** 2));
+
+const ROOT = D('~',
+  D('VMs',
+    F('win11.qcow2', 41200), F('debian-13.qcow2', 22400), F('nixos-test.qcow2', 9300),
+    D('iso', F('Win11_24H2_English_x64.iso', 5600), F('nixos-25.05-x86_64.iso', 2500), F('debian-13.1.0-amd64-netinst.iso', 780))),
+  D('Videos',
+    D('conference-2025', F('day1-keynote.mkv', 6100), F('day2-workshops.mkv', 5400), F('b-roll.mov', 3200), F('interviews.mov', 2700), many(6, 'clip-', 'mp4', 120, 900)),
+    D('screen-recordings', many(18, 'rec-2025-', 'mp4', 90, 1400)),
+    F('drone-footage.mov', 4800), F('timelapse-4k.mp4', 2900)),
+  D('Projects',
+    D('ml-experiments',
+      D('checkpoints', F('run-12-step-80000.safetensors', 6800), F('run-12-step-40000.safetensors', 6800), F('run-09-final.safetensors', 4300), F('run-07-final.safetensors', 2100)),
+      D('data', many(9, 'shard-', 'parquet', 180, 950)),
+      D('.venv', D('lib', many(40, 'torch_', 'so', 5, 420), many(60, 'pkg_', 'py', 0.01, 0.6))),
+      D('notebooks', many(7, 'explore-', 'ipynb', 0.4, 38))),
+    D('ratadiskusage',
+      D('target',
+        D('debug', D('deps', many(48, 'libcrate_', 'rlib', 4, 190), many(30, 'libcrate_', 'rmeta', 1, 80)), D('incremental', many(25, 's-', 'bin', 2, 60))),
+        D('release', F('ratadiskusage', 9.4), D('deps', many(26, 'libcrate_', 'rlib', 3, 120)))),
+      D('src', many(14, 'mod_', 'rs', 0.004, 0.06)),
+      F('Cargo.lock', 0.09)),
+    D('webshop',
+      D('node_modules',
+        D('next', D('dist', many(30, 'chunk-', 'js', 0.2, 9))),
+        D('typescript', many(8, 'lib.', 'js', 1, 11)),
+        D('.cache', many(5, 'pack-', 'gz', 1, 7)),
+        D('esbuild', F('esbuild', 10.8)),
+        D('@babel', many(22, 'core-', 'js', 0.1, 1.2)),
+        D('react-dom', many(6, 'react-dom.', 'js', 0.3, 2.5)),
+        many(120, 'dep-', 'js', 0.01, 0.5)),
+      D('dist', many(12, 'bundle-', 'js', 0.3, 3)),
+      D('src', many(40, 'page-', 'tsx', 0.002, 0.03))),
+    D('dotfiles', many(12, 'conf-', 'toml', 0.001, 0.01))),
+  D('Pictures',
+    D('2025', many(90, 'IMG_', 'cr3', 22, 34, 4), many(140, 'IMG_', 'jpg', 3, 9, 4)),
+    D('2024', many(60, 'IMG_', 'cr3', 22, 33, 4), many(160, 'IMG_', 'jpg', 2.5, 8, 4)),
+    D('export', many(24, 'poster-', 'png', 4, 60))),
+  D('Downloads',
+    F('ubuntu-25.10-desktop-amd64.iso', 5900), F('dataset-full.zip', 3800), F('fonts-archive.zip', 640),
+    many(9, 'installer-', 'deb', 20, 260), many(30, 'paper-', 'pdf', 0.3, 24), many(6, 'backup-', 'tar.gz', 60, 900)),
+  D('Music', D('flac', many(70, 'track-', 'flac', 18, 48)), D('mp3', many(120, 'track-', 'mp3', 3, 11))),
+  D('.cache',
+    D('mozilla', many(40, 'cache2-', 'bin', 1, 90)),
+    D('cargo-registry', many(60, 'crate-', 'crate', 0.2, 14)),
+    D('pip', many(25, 'wheel-', 'whl', 1, 180)),
+    D('thumbnails', many(200, 'thumb-', 'png', 0.01, 0.2))),
+  D('Documents', many(35, 'report-', 'pdf', 0.2, 18), many(20, 'notes-', 'md', 0.001, 0.03), many(8, 'budget-', 'xlsx', 0.05, 2)),
+  F('.zsh_history', 0.9), F('.bash_history', 0.3), F('todo.txt', 0.004));
+
+let nextId = 1;
+function retotal(n) {
+  n.size = 0; n.count = 0; n.types = new Map();
+  for (const k of n.kids) {
+    n.size += k.size;
+    n.count += k.dir ? k.count : 1;
+    if (k.dir) for (const [e, v] of k.types) n.types.set(e, (n.types.get(e) || 0) + v);
+    else n.types.set(k.ext, (n.types.get(k.ext) || 0) + k.size);
+  }
+  n.kids.sort((a, b) => b.size - a.size);
+  let best = '—', bv = -1;
+  for (const [e, v] of n.types) if (v > bv) { bv = v; best = e; }
+  n.dom = best;
+}
+function prep(n, parent) {
+  n.id = nextId++; n.parent = parent; n.p = 1;
+  if (n.kids) { n.dir = true; for (const k of n.kids) prep(k, n); retotal(n); }
+  else { n.dir = false; const m = /[^.]\.([A-Za-z0-9]+)$/.exec(n.name); n.ext = m ? '.' + m[1].toLowerCase() : '—'; }
+}
+prep(ROOT, null);
+const typeRank = new Map([...ROOT.types].filter(e => e[0] !== '—').sort((a, b) => b[1] - a[1]).map((e, i) => [e[0], i]));
+
+// ---------- colour ----------
+function oklch(L, Cc, h) {
+  const a = Cc * Math.cos(h * Math.PI / 180), b = Cc * Math.sin(h * Math.PI / 180);
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
+  const f = v => { v = Math.min(1, Math.max(0, v)); return Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055)); };
+  return f(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s) << 16
+       | f(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s) << 8
+       | f(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+}
+const colorCache = new Map();
+function typeColor(ext, L) {
+  const k = ext + '|' + Math.round(L * 100);
+  let v = colorCache.get(k);
+  if (v === undefined) {
+    const r = typeRank.get(ext);
+    v = ext === '—' ? oklch(L, 0.035, 285)
+      : (r === undefined || r >= 14) ? oklch(L, 0.022, 310)
+      : oklch(L, 0.112, (28 + r * 137.508) % 360);
+    colorCache.set(k, v);
+  }
+  return v;
+}
+function mix(a, b, t) {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  const ar = a >> 16 & 255, ag = a >> 8 & 255, ab = a & 255;
+  return ((ar + ((b >> 16 & 255) - ar) * t) | 0) << 16 | ((ag + ((b >> 8 & 255) - ag) * t) | 0) << 8 | ((ab + ((b & 255) - ab) * t) | 0);
+}
+const cssCache = new Map();
+function css(c) { let s = cssCache.get(c); if (!s) { s = '#' + c.toString(16).padStart(6, '0'); cssCache.set(c, s); } return s; }
+
+// ---------- formatting ----------
+function fmt(b) {
+  const u = b >= GB ? [GB, 'G'] : b >= MB ? [MB, 'M'] : b >= 1024 ? [1024, 'K'] : null;
+  if (!u) return Math.round(b) + 'B';
+  const v = b / u[0];
+  return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + u[1];
+}
+const num = n => Math.round(n).toLocaleString('en-US');
+const pct = s => s >= 0.995 ? '100%' : s < 0.01 ? '<1%' : Math.round(s * 100) + '%';
+const len = s => [...s].length;
+function fit(s, w) { const a = [...s]; return a.length <= w ? s : w <= 0 ? '' : a.slice(0, w - 1).join('') + '…'; }
+function pathOf(n) { const parts = []; for (let a = n; a; a = a.parent) parts.unshift(a.name); return parts.join('/'); }
+
+// ---------- state ----------
+const term = document.getElementById('term'), cv = document.getElementById('screen'), ctx = cv.getContext('2d');
+let cols = 0, rows = 0, cw = 8, chh = 18, fontPx = 14, dpr = 1, linePx = 1, ASPECT = 2.2;
+let CH = [], FG = new Int32Array(0), BG = new Int32Array(0), BOLD = new Uint8Array(0), SEAM = new Uint8Array(0);
+let CL = null, R = null;
+let cwd = ROOT, sel = ROOT.kids[0], focus = 'map', expanded = new Set(), scroll = 0;
+let modal = null, freed = 0, flash = null, legend = null;
+let lastInput = performance.now();
+let disp = new Map(), leaving = [], anim = { t0: 0, dur: 0 };
+let scan = null, dissolve = null, hitRows = [], filesIn = null;
+const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+let reduced = !!(mq && mq.matches);
+
+// ---------- cell buffer ----------
+function put(x, y, s, fg, bg, bold) {
+  const lx0 = CL ? CL.x0 : 0, lx1 = CL ? CL.x1 : cols, ly0 = CL ? CL.y0 : 0, ly1 = CL ? CL.y1 : rows;
+  for (const c of s) {
+    if (x >= lx0 && x < lx1 && y >= ly0 && y < ly1) {
+      const i = y * cols + x;
+      CH[i] = c === ' ' ? '' : c; FG[i] = fg; BOLD[i] = bold ? 1 : 0;
+      if (bg != null) { BG[i] = bg; SEAM[i] = 0; }
+    }
+    x++;
+  }
+  return x;
+}
+function segs(x, y, maxX, parts) {
+  for (const p of parts) {
+    if (!p || !p[0]) continue;
+    const room = maxX - x;
+    if (room <= 0) break;
+    if (len(p[0]) > room) { put(x, y, fit(p[0], room), p[1], p[3], p[2]); break; }
+    x = put(x, y, p[0], p[1], p[3], p[2]);
+  }
+  return x;
+}
+function fill(x, y, w, h, bg) {
+  for (let yy = Math.max(0, y); yy < Math.min(rows, y + h); yy++)
+    for (let xx = Math.max(0, x); xx < Math.min(cols, x + w); xx++) {
+      const i = yy * cols + xx; BG[i] = bg; CH[i] = ''; SEAM[i] = 0; BOLD[i] = 0;
+    }
+}
+function box(p, fg) {
+  const x1 = p.x + p.w - 1, y1 = p.y + p.h - 1;
+  for (let x = p.x + 1; x < x1; x++) { put(x, p.y, '─', fg); put(x, y1, '─', fg); }
+  for (let y = p.y + 1; y < y1; y++) { put(p.x, y, '│', fg); put(x1, y, '│', fg); }
+  put(p.x, p.y, '┌', fg); put(x1, p.y, '┐', fg); put(p.x, y1, '└', fg); put(x1, y1, '┘', fg);
+}
+function pane(p, title, on) {
+  box(p, on ? C.squash : C.border);
+  put(p.x + 2, p.y, ' ' + title + ' ', on ? C.ink : C.fg, on ? C.squash : C.border, true);
+  return { x: p.x + 1, y: p.y + 1, w: p.w - 2, h: p.h - 2 };
+}
+
+// ---------- scan progress ----------
+function prog(n) {
+  if (!scan) return 1;
+  for (let a = n; a; a = a.parent) {
+    if (a.parent === scan.root) return a.p;
+    if (a === scan.root) return scan.avg;
+  }
+  return 1;
+}
+const eff = n => n.size * prog(n);
+
+// ---------- treemap ----------
+function squarify(items, x, y, w, h) {
+  const out = [];
+  let total = 0;
+  for (const it of items) total += it.v;
+  if (!(total > 0) || w <= 0 || h <= 0) return out;
+  const k = w * h / total;
+  let i = 0;
+  while (i < items.length) {
+    const side = Math.max(1e-6, Math.min(w, h));
+    const row = [];
+    let sum = 0, mx = 0, mn = Infinity, worst = Infinity;
+    while (i < items.length) {
+      const a = items[i].v * k, s2 = sum + a, mx2 = Math.max(mx, a), mn2 = Math.min(mn, a);
+      const wr = Math.max(side * side * mx2 / (s2 * s2), s2 * s2 / (side * side * mn2));
+      if (row.length && wr > worst) break;
+      row.push(items[i]); sum = s2; mx = mx2; mn = mn2; worst = wr; i++;
+    }
+    if (w >= h) {
+      const colW = sum / h; let yy = y;
+      for (const it of row) { const hh = it.v * k / colW; out.push({ it, x, y: yy, w: colW, h: hh }); yy += hh; }
+      x += colW; w -= colW;
+    } else {
+      const rowH = sum / w; let xx = x;
+      for (const it of row) { const ww = it.v * k / rowH; out.push({ it, x: xx, y, w: ww, h: rowH }); xx += ww; }
+      y += rowH; h -= rowH;
+    }
+  }
+  return out;
+}
+function place(nodes, X, Y, W, H, depth, pid, out) {
+  const live = nodes.map(n => ({ n, v: eff(n) })).filter(o => o.v > 0).sort((a, b) => b.v - a.v);
+  if (!live.length || W < 1 || H < 1) return;
+  let total = 0;
+  for (const o of live) total += o.v;
+  const minArea = depth === 1 ? 12 : 6, minW = depth === 1 ? 5 : 3;
+  const big = [], small = [];
+  for (const o of live) ((o.v / total * W * H >= minArea && big.length < 48) ? big : small).push(o);
+  let rects;
+  for (;;) {
+    const items = big.slice();
+    if (small.length) {
+      let sv = 0;
+      for (const o of small) sv += o.v;
+      items.push({ small: true, v: sv, list: small.map(o => o.n) });
+      items.sort((a, b) => b.v - a.v);
+    }
+    rects = squarify(items, X, Y * ASPECT, W, H * ASPECT).map(r => {
+      const x0 = Math.round(r.x), x1 = Math.round(r.x + r.w), y0 = Math.round(r.y / ASPECT), y1 = Math.round((r.y + r.h) / ASPECT);
+      return { it: r.it, x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    });
+    if (big.length > 1 && rects.some(r => !r.it.small && (r.w < minW || r.h < 1))) small.unshift(big.pop());
+    else break;
+  }
+  for (const r of rects) {
+    if (r.w < 1 || r.h < 1) continue;
+    const t = { depth, x: r.x, y: r.y, w: r.w, h: r.h, v: r.it.v, share: r.it.v / total };
+    if (r.it.small) { t.key = 's' + pid; t.small = true; t.list = r.it.list; }
+    else { t.key = r.it.n.id; t.node = r.it.n; }
+    out.push(t);
+    if (depth === 1 && t.node && t.node.dir && t.w >= 10 && t.h >= 4) {
+      const before = out.length;
+      place(t.node.kids, t.x, t.y + 1, t.w, t.h - 1, 2, t.node.id, out);
+      t.nested = out.length > before;
+    }
+  }
+}
+const ease = t => 1 - Math.pow(1 - t, 3);
+const animT = now => anim.dur ? Math.min(1, Math.max(0, (now - anim.t0) / anim.dur)) : 1;
+const lerpRect = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, w: a.w + (b.w - a.w) * t, h: a.h + (b.h - a.h) * t });
+const affine = (r, s, d) => ({ x: d.x + (r.x - s.x) * d.w / s.w, y: d.y + (r.y - s.y) * d.h / s.h, w: r.w * d.w / s.w, h: r.h * d.h / s.h });
+
+function relayout(kind, makeA) {
+  if (!R) return;
+  const now = performance.now(), M = R.mapIn, tiles = [];
+  place(cwd.kids, M.x, M.y, M.w, M.h, 1, cwd.id, tiles);
+  const e0 = ease(animT(now)), old = disp;
+  const dur = (reduced || kind === 'instant') ? 0 : kind === 'nav' ? T_NAV : kind === 'reveal' ? T_REVEAL : T_ROUTINE;
+  const A = dur && makeA ? makeA(tiles, old, e0, M) : null;
+  const next = new Map();
+  for (const t of tiles) {
+    const o = old.get(t.key);
+    let from = t, fade = false;
+    if (dur) {
+      if (o) from = lerpRect(o.from, o.t, e0);
+      else if (A) { from = A.fwd(t); fade = true; }
+      else { from = { x: t.x + t.w / 2, y: t.y + t.h / 2, w: 0, h: 0 }; fade = true; }
+    }
+    next.set(t.key, { t, from, fade });
+  }
+  leaving = [];
+  if (dur) for (const [k, o] of old) if (!next.has(k)) {
+    const c = lerpRect(o.from, o.t, e0);
+    leaving.push({ t: o.t, from: c, to: A ? A.inv(c) : c });
+  }
+  disp = next;
+  anim = { t0: now, dur };
+  dirty();
+}
+
+// ---------- selection helpers ----------
+function selKey() {
+  for (let a = sel; a && a !== cwd; a = a.parent) {
+    if (disp.has(a.id)) return a.id;
+    const b = disp.get('s' + a.parent.id);
+    if (b && b.t.small && b.t.list.includes(a)) return b.t.key;
+  }
+  return null;
+}
+function topTile() {
+  let a = sel;
+  while (a && a.parent !== cwd) a = a.parent;
+  if (!a) return null;
+  const en = disp.get(a.id);
+  if (en) return en.t;
+  const b = disp.get('s' + cwd.id);
+  return b && b.t.list.includes(a) ? b.t : null;
+}
+function listRows() {
+  const out = [];
+  (function add(n, d) { for (const k of n.kids) { out.push({ n: k, d }); if (k.dir && expanded.has(k.id)) add(k, d + 1); } })(cwd, 0);
+  return out;
+}
+function getLegend() {
+  if (legend) return legend;
+  const m = new Map();
+  let total = 0;
+  for (const k of cwd.kids) {
+    const p = prog(k);
+    if (p <= 0) continue;
+    if (k.dir) for (const [e, v] of k.types) m.set(e, (m.get(e) || 0) + v * p);
+    else m.set(k.ext, (m.get(k.ext) || 0) + k.size * p);
+  }
+  for (const v of m.values()) total += v;
+  legend = { list: [...m].sort((a, b) => b[1] - a[1]), total };
+  return legend;
+}
+
+// ---------- painting: header, panes ----------
+function paintHeader() {
+  let x = put(0, 0, cols >= 72 ? ' RATADISKUSAGE ' : ' RDU ', C.ink, C.squash, true);
+  const chip = scan ? ' ◆ SCANNING ' : ' ◆ COMPLETE ';
+  const room = cols - x - 2 - len(chip);
+  x = put(x + 1, 0, fit(pathOf(cwd) + '/', Math.max(3, room)), C.fg, null, true);
+  if (x + 1 + len(chip) <= cols) x = put(x + 1, 0, chip, scan ? C.squash : C.ink, scan ? C.border : C.green, true);
+  if (flash && flash.msg && performance.now() - flash.t0 < 2600) {
+    const mx = cols - len(flash.msg) - 1;
+    if (mx > x + 1) put(mx, 0, flash.msg, flash.color, null, true);
+  }
+  const sep = [' · ', C.faint];
+  if (scan) segs(1, 1, cols - 1, [['Measuring ', C.dim], [fmt(eff(cwd)), C.fg, 1], sep, [num(cwd.count * prog(cwd)) + ' files so far', C.dim]]);
+  else segs(1, 1, cols - 1, [['This folder ', C.dim], [fmt(cwd.size), C.fg, 1], sep, [num(cwd.count) + ' files', C.dim], sep,
+    ['Scan total ', C.dim], [fmt(ROOT.size), C.fg, 1], sep, ['Freed ', C.dim], [fmt(freed), freed ? C.green : C.fg, 1]]);
+}
+function bar(x, y, w, frac, fg, track) {
+  const cells = Math.max(0, Math.min(1, frac)) * w, full = Math.floor(cells), rem = Math.round((cells - full) * 8);
+  for (let i = 0; i < w; i++) {
+    const k = y * cols + x + i;
+    if (x + i >= cols) break;
+    BG[k] = i < full ? fg : track; CH[k] = ''; SEAM[k] = 0;
+    if (i === full && rem > 0) { CH[k] = '▏▎▍▌▋▊▉█'[rem - 1]; FG[k] = fg; BOLD[k] = 0; }
+  }
+}
+function paintFiles(p, on) {
+  const I = pane(p, 'FILES', on), rs = listRows();
+  hitRows = []; filesIn = I;
+  if (!rs.length) { put(I.x + 1, I.y, fit('Empty folder', I.w - 2), C.dim); return; }
+  const si = rs.findIndex(r => r.n === sel);
+  if (si >= 0) { if (si < scroll) scroll = si; if (si >= scroll + I.h) scroll = si - I.h + 1; }
+  scroll = Math.max(0, Math.min(scroll, Math.max(0, rs.length - I.h)));
+  const sizeW = 7, pctW = 5, barW = I.w >= 44 ? 10 : I.w >= 36 ? 6 : 0;
+  const nameEnd = I.x + I.w - sizeW - pctW - (barW ? barW + 1 : 0);
+  const selBg = on ? mix(C.bg, C.squash, 0.24) : mix(C.bg, C.fg, 0.12);
+  for (let r = 0; r < I.h && scroll + r < rs.length; r++) {
+    const { n, d } = rs[scroll + r], y = I.y + r, isSel = n === sel;
+    if (isSel) fill(I.x, y, I.w, 1, selBg);
+    const tc = typeColor(n.dir ? n.dom : n.ext, 0.76);
+    let x = I.x + 1 + d * 2;
+    if (x < nameEnd - 3) {
+      put(x, y, n.dir ? (expanded.has(n.id) ? '▾' : '▸') : '■', tc);
+      put(x + 2, y, fit(n.name + (n.dir ? '/' : ''), nameEnd - x - 3), isSel ? C.white : n.dir ? C.fg : C.soft, null, n.dir);
+    }
+    const v = eff(n), pv = eff(n.parent), share = pv > 0 ? v / pv : 0;
+    let cx = nameEnd;
+    if (barW) { bar(cx, y, barW, share, tc, isSel ? mix(selBg, C.ink, 0.4) : C.track); cx += barW + 1; }
+    const ps = pct(share), ss = fmt(v);
+    put(cx + pctW - 1 - len(ps), y, ps, isSel ? C.fg : C.dim);
+    put(I.x + I.w - 1 - len(ss), y, ss, isSel ? C.white : C.soft);
+    hitRows.push({ y, n });
+  }
+  const more = rs.length - scroll - I.h;
+  if (more > 0) { const s = ' +' + more + ' more '; put(p.x + p.w - 2 - len(s), p.y + p.h - 1, s, C.dim); }
+}
+function selExt() { return sel ? (sel.dir ? sel.dom : sel.ext) : null; }
+function paintTypes(p) {
+  const I = pane(p, 'TYPES', false), L = getLegend(), se = selExt();
+  const rowsFit = I.h, list = L.list.length > rowsFit ? L.list.slice(0, rowsFit - 1) : L.list;
+  let shown = 0, y = I.y;
+  const line = (sw, name, v, hot) => {
+    if (sw != null) put(I.x + 1, y, '■', sw);
+    put(I.x + 3, y, fit(name, I.w - 20), hot ? C.white : C.soft, null, hot);
+    const ss = fmt(v), ps = pct(L.total ? v / L.total : 0);
+    put(I.x + I.w - 7 - len(ss), y, ss, hot ? C.white : C.soft);
+    put(I.x + I.w - 1 - len(ps), y, ps, hot ? C.fg : C.dim);
+    y++;
+  };
+  for (const [e, v] of list) { line(typeColor(e, 0.76), e === '—' ? 'no extension' : e, v, e === se); shown += v; }
+  if (L.list.length > list.length) line(C.faint, 'other', L.total - shown, false);
+  if (!L.list.length) put(I.x + 1, I.y, 'Nothing measured yet', C.dim);
+}
+function paintStrip(s) {
+  let x = 1;
+  for (const [e] of getLegend().list) {
+    const name = e === '—' ? 'none' : e;
+    if (x + len(name) + 3 > cols) break;
+    put(x, s.y, '■', typeColor(e, 0.76));
+    x = put(x + 2, s.y, name, e === selExt() ? C.white : C.dim) + 2;
+  }
+}
+function paintInspector(p) {
+  const I = pane(p, 'SELECTED ITEM', false), maxX = I.x + I.w - 1, x = I.x + 1;
+  if (!sel) { put(x, I.y, fit('Empty folder. Esc goes up.', I.w - 2), C.dim); return; }
+  const n = sel, name = n.name + (n.dir ? '/' : ''), pre = pathOf(n.parent) + '/';
+  const room = I.w - 2 - len(name);
+  const preShown = room >= len(pre) ? pre : room > 2 ? '…' + [...pre].slice(len(pre) - room + 1).join('') : '';
+  segs(x, I.y, maxX, [[preShown, C.dim], [name, C.white, 1]]);
+  const v = eff(n), pv = eff(n.parent), sep = [' · ', C.faint];
+  segs(x, I.y + 1, maxX, [['Space used ', C.dim], [fmt(v), C.fg, 1], sep, [pct(pv > 0 ? v / pv : 0) + ' of parent', C.dim], sep, [pct(v / ROOT.size) + ' of scan', C.dim]]);
+  const ext = n.dir ? n.dom : n.ext, tname = ext === '—' ? 'no extension' : ext;
+  const acts = n.dir && n.kids.length ? [['Enter', C.squash, 1], [' open', C.dim], sep, ['Bksp', C.squash, 1], [' delete', C.dim]] : [['Bksp', C.squash, 1], [' delete', C.dim]];
+  const kind = n.dir ? [['Folder', C.fg], sep, [num(n.count) + ' files', C.dim], sep, ['mostly ', C.dim], ['■ ', typeColor(ext, 0.76)], [tname, C.soft]]
+                     : [['File', C.fg], sep, ['■ ', typeColor(ext, 0.76)], [tname, C.soft]];
+  if (I.h >= 4) { segs(x, I.y + 2, maxX, kind); segs(x, I.y + 3, maxX, acts); }
+  else segs(x, I.y + 2, maxX, kind.concat([sep], acts));
+}
+function paintFooter() {
+  const y = rows - 1;
+  const hints = modal ? (modal.kind === 'delete' ? [['y', 'delete'], ['n', 'cancel']] : [['any key', 'close']])
+    : focus === 'map' ? [['arrows/hjkl', 'move'], ['Enter', 'open'], ['Esc', 'up'], ['Tab', 'files'], ['Bksp', 'delete'], ['r', 'rescan'], ['?', 'help']]
+    : [['↑↓', 'move'], ['→', 'expand'], ['←', 'collapse'], ['Enter', 'open'], ['Esc', 'up'], ['Tab', 'map'], ['Bksp', 'delete'], ['?', 'help']];
+  let x = 1;
+  for (const [k, d] of hints) {
+    if (x + len(k) + 1 + len(d) > cols - 1) break;
+    x = put(x, y, k, C.squash, null, true);
+    x = put(x + 1, y, d, C.dim) + 2;
+  }
+}
+function paintModal() {
+  const del = modal.kind === 'delete', w = Math.min(cols - 2, del ? 52 : 54), n = modal.node;
+  const key = (k, d) => [[k.padEnd(15), C.squash, 1], [d, C.fg]];
+  const lines = del ? [
+    [['Delete ', C.fg], [fit(n.name + (n.dir ? '/' : ''), w - 15), C.white, 1], ['?', C.fg]],
+    [['Frees ', C.dim], [fmt(n.size), C.green, 1], [n.dir ? ' across ' + num(n.count) + ' files' : '', C.dim]],
+    [['Mockup only. Nothing on disk is touched.', C.dim]],
+    [],
+    [['y', C.red, 1], [' delete     ', C.fg], ['n', C.squash, 1], [' cancel', C.fg]]
+  ] : [
+    key('arrows / hjkl', 'move between tiles or rows'),
+    key('Enter', 'open the selected folder'),
+    key('Esc', 'go up to the parent folder'),
+    key('Tab', 'switch between map and files'),
+    key('→ / ←', 'expand or collapse in the file list'),
+    key('Bksp or d', 'delete, asks first'),
+    key('r', 'rescan this folder'),
+    key('?', 'this list')
+  ];
+  const h = lines.length + 4, x = (cols - w) >> 1, y = Math.max(0, (rows - h) >> 1), col = del ? C.red : C.squash;
+  fill(x, y, w, h, C.lift);
+  box({ x, y, w, h }, col);
+  put(x + 2, y, del ? ' DELETE ' : ' KEYS ', C.ink, col, true);
+  lines.forEach((ln, i) => segs(x + 3, y + 2 + i, x + w - 2, ln));
+}
+
+// ---------- painting: map ----------
+function tileStyle(t) {
+  if (t.small) return { bg: C.muted, ink: C.dim };
+  const ext = t.node.dir ? t.node.dom : t.node.ext;
+  if (t.nested) return { bg: typeColor(ext, 0.38), ink: C.fg };
+  const L = Math.min(0.8, (t.depth === 1 ? 0.58 : 0.52) + 0.2 * Math.sqrt(t.share));
+  return { bg: typeColor(ext, L), ink: C.ink };
+}
+function cellNoise(x, y) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) ^ 0x0D3E1E7E;
+  h = Math.imul(h ^ h >>> 13, 1274126177);
+  return ((h ^ h >>> 16) >>> 0) / 4294967296 * 0.6 + ((x + y) & 1 ? 0.4 : 0);
+}
+function label(t, x0, y0, x1, y1, M, st) {
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 4 || h < 1) return;
+  CL = { x0: Math.max(x0, M.x), x1: Math.min(x1, M.x + M.w), y0: Math.max(y0, M.y), y1: Math.min(y1, M.y + M.h) };
+  const name = t.small ? '+' + t.list.length + ' small' : t.node.name + (t.node.dir ? '/' : '');
+  const size = fmt(t.v), pc = pct(t.share);
+  if (t.nested) {
+    const full = name + '  ' + size + ' · ' + pc;
+    put(x0 + 2, y0, len(full) <= w - 3 ? full : fit(name, w - 3), st.ink, null, true);
+  } else if (t.depth === 1) {
+    const l1 = fit(name, w - 2), l2 = size + ' · ' + pc;
+    if (h >= 2 && len(l2) <= w - 2) {
+      const yy = y0 + ((h - 2) >> 1);
+      put(x0 + ((w - len(l1)) >> 1), yy, l1, st.ink, null, true);
+      put(x0 + ((w - len(l2)) >> 1), yy + 1, l2, mix(st.ink, st.bg, 0.3));
+    } else put(x0 + ((w - len(l1)) >> 1), y0 + ((h - 1) >> 1), l1, st.ink, null, true);
+  } else if (w >= 5) {
+    put(x0 + 1, y0, fit(name, w - 2), mix(st.ink, st.bg, 0.12));
+    if (h >= 2 && w >= 7) put(x0 + 1, y0 + 1, fit(size, w - 2), mix(st.ink, st.bg, 0.4));
+  }
+  CL = null;
+}
+function paintTile(t, r, alpha, M, now, ghost) {
+  const x0 = Math.round(r.x), y0 = Math.round(r.y), x1 = Math.round(r.x + r.w), y1 = Math.round(r.y + r.h);
+  const a0 = Math.max(x0, M.x), b0 = Math.max(y0, M.y), a1 = Math.min(x1, M.x + M.w), b1 = Math.min(y1, M.y + M.h);
+  if (a1 <= a0 || b1 <= b0) return;
+  const st = t.st || (t.st = tileStyle(t));
+  const bg = alpha < 1 ? mix(C.bg, st.bg, alpha) : st.bg;
+  let dp = -1;
+  if (dissolve) {
+    const dn = dissolve.node;
+    if (t.node === dn || (t.node && t.node.parent === dn) || t.key === 's' + dn.id) dp = (now - dissolve.t0) / dissolve.dur;
+  }
+  const fgc = t.small ? mix(bg, C.dim, 0.45) : st.ink;
+  for (let y = b0; y < b1; y++) for (let x = a0; x < a1; x++) {
+    const i = y * cols + x;
+    if (dp >= 0 && cellNoise(x, y) < dp) { BG[i] = C.bg; CH[i] = ''; SEAM[i] = 0; continue; }
+    BG[i] = bg; CH[i] = t.small ? '░' : ''; FG[i] = fgc; BOLD[i] = 0;
+    SEAM[i] = (x === x0 && x0 > M.x ? 1 : 0) | (y === y0 && y0 > M.y ? 2 : 0);
+  }
+  if (!ghost && alpha > 0.55 && dp < 0) label(t, x0, y0, x1, y1, M, st);
+}
+function paintSelection(M, now, e) {
+  const k = selKey(), en = k == null ? null : disp.get(k);
+  if (!en || (dissolve && dissolve.node === sel)) return;
+  const r = lerpRect(en.from, en.t, e);
+  const x0 = Math.round(r.x), y0 = Math.round(r.y), x1 = Math.round(r.x + r.w), y1 = Math.round(r.y + r.h);
+  const a0 = Math.max(x0, M.x), b0 = Math.max(y0, M.y), a1 = Math.min(x1, M.x + M.w), b1 = Math.min(y1, M.y + M.h);
+  if (a1 <= a0 || b1 <= b0) return;
+  const w = x1 - x0, h = y1 - y0, since = now - lastInput, live = !reduced && since < SHEEN;
+  const span = Math.max(1, w * 0.5 + h), head = -0.25 + 1.5 * since / SHEEN;
+  for (let y = b0; y < b1; y++) for (let x = a0; x < a1; x++) {
+    let lift = 0.1;
+    if (live) { const d = ((x - x0) * 0.5 + (y - y0)) / span - head; lift += 0.36 * Math.exp(-d * d / 0.022); }
+    const i = y * cols + x;
+    BG[i] = mix(BG[i], C.white, lift);
+  }
+  const heavy = focus === 'map', oc = heavy ? C.white : mix(C.white, C.bg, 0.3);
+  if (w >= 2 && h >= 2) {
+    const g = heavy ? '━┃┏┓┗┛' : '─│┌┐└┘';
+    CL = { x0: a0, x1: a1, y0: b0, y1: b1 };
+    for (let x = x0 + 1; x < x1 - 1; x++) { put(x, y0, g[0], oc); put(x, y1 - 1, g[0], oc); }
+    for (let y = y0 + 1; y < y1 - 1; y++) { put(x0, y, g[1], oc); put(x1 - 1, y, g[1], oc); }
+    put(x0, y0, g[2], oc); put(x1 - 1, y0, g[3], oc); put(x0, y1 - 1, g[4], oc); put(x1 - 1, y1 - 1, g[5], oc);
+    CL = null;
+  }
+  label(en.t, x0, y0, x1, y1, M, en.t.st || tileStyle(en.t));
+}
+function paintMap(M, now) {
+  const done = animT(now) >= 1;
+  if (done && leaving.length) leaving = [];
+  const e = ease(animT(now));
+  if (!disp.size && !leaving.length) {
+    if (scan) {
+      for (let y = M.y; y < M.y + M.h; y += 2) for (let x = M.x + 1 + ((y >> 1) & 1) * 2; x < M.x + M.w; x += 4) put(x, y, '·', C.faint);
+      const s = ' Measuring ' + pathOf(scan.root) + '/ ';
+      put(M.x + ((M.w - len(s)) >> 1), M.y + (M.h >> 1), fit(s, M.w), C.squash, C.bg, true);
+    } else {
+      const s = 'Empty folder';
+      put(M.x + ((M.w - len(s)) >> 1), M.y + (M.h >> 1), s, C.dim);
+    }
+    return;
+  }
+  for (const l of leaving) paintTile(l.t, lerpRect(l.from, l.to, e), 1 - e, M, now, true);
+  for (let depth = 1; depth <= 2; depth++)
+    for (const en of disp.values()) if (en.t.depth === depth) paintTile(en.t, lerpRect(en.from, en.t, e), en.fade ? e : 1, M, now, false);
+  paintSelection(M, now, e);
+}
+function paint(now) {
+  if (!cols) return;
+  CH.fill(''); FG.fill(C.fg); BG.fill(C.bg); BOLD.fill(0); SEAM.fill(0);
+  paintHeader();
+  if (R.narrow) {
+    if (focus === 'map') paintMap(pane(R.main, 'STORAGE MAP', true), now);
+    else paintFiles(R.main, true);
+    paintStrip(R.strip);
+  } else {
+    paintFiles(R.files, focus === 'files');
+    paintTypes(R.types);
+    const I = pane(R.map, 'STORAGE MAP', focus === 'map');
+    paintMap(I, now);
+    if (disp.has('s' + cwd.id)) { const s = ' ░░ small entries '; put(R.map.x + R.map.w - 2 - len(s), R.map.y + R.map.h - 1, s, C.dim); }
+  }
+  paintInspector(R.insp);
+  paintFooter();
+  if (flash) {
+    const t = (now - flash.t0) / T_FLASH;
+    if (t < 1 && !reduced) for (let i = 0; i < cols * 2; i++) FG[i] = mix(flash.color, FG[i], t);
+    if (now - flash.t0 > 2600) flash = null;
+  }
+  if (modal) paintModal();
+  flush();
+  const delOpen = !!(modal && modal.kind === 'delete');
+  keyY.disabled = !delOpen; keyN.disabled = !delOpen;
+}
+
+// ---------- canvas ----------
+const BOX = { '─': [0, 0, 1, 1, 0], '│': [1, 1, 0, 0, 0], '┌': [0, 1, 0, 1, 0], '┐': [0, 1, 1, 0, 0], '└': [1, 0, 0, 1, 0], '┘': [1, 0, 1, 0, 0],
+              '━': [0, 0, 1, 1, 1], '┃': [1, 1, 0, 0, 1], '┏': [0, 1, 0, 1, 1], '┓': [0, 1, 1, 0, 1], '┗': [1, 0, 0, 1, 1], '┛': [1, 0, 1, 0, 1] };
+const EIGHTH = { '▏': 1, '▎': 2, '▍': 3, '▌': 4, '▋': 5, '▊': 6, '▉': 7, '█': 8 };
+function glyph(g, c, X, Y) {
+  const b = BOX[c];
+  if (b) {
+    const th = b[4] ? linePx * 2 : linePx, mx = X + ((cw - th) >> 1), my = Y + ((chh - th) >> 1);
+    if (b[0]) g.fillRect(mx, Y, th, my - Y + th);
+    if (b[1]) g.fillRect(mx, my, th, Y + chh - my);
+    if (b[2]) g.fillRect(X, my, mx - X + th, th);
+    if (b[3]) g.fillRect(mx, my, X + cw - mx, th);
+    return;
+  }
+  const e = EIGHTH[c];
+  if (e) { g.fillRect(X, Y, Math.round(cw * e / 8), chh); return; }
+  const cx = X + cw / 2, cy = Y + chh / 2;
+  switch (c) {
+    case '░':
+      g.strokeStyle = g.fillStyle; g.lineWidth = linePx;
+      g.beginPath(); g.moveTo(X, Y + chh); g.lineTo(X + cw, Y); g.stroke();
+      return;
+    case '■': { const s = Math.round(Math.min(cw * 0.82, chh * 0.44)); g.fillRect(X + ((cw - s) >> 1), Y + ((chh - s) >> 1), s, s); return; }
+    case '◆': { const rx = cw * 0.44, ry = Math.min(chh * 0.3, cw * 0.62);
+      g.beginPath(); g.moveTo(cx, cy - ry); g.lineTo(cx + rx, cy); g.lineTo(cx, cy + ry); g.lineTo(cx - rx, cy); g.closePath(); g.fill(); return; }
+    case '▸': { const hh = chh * 0.2;
+      g.beginPath(); g.moveTo(X + cw * 0.2, cy - hh); g.lineTo(X + cw * 0.86, cy); g.lineTo(X + cw * 0.2, cy + hh); g.closePath(); g.fill(); return; }
+    case '▾': { const hw = cw * 0.4, hh = chh * 0.13;
+      g.beginPath(); g.moveTo(cx - hw, cy - hh); g.lineTo(cx + hw, cy - hh); g.lineTo(cx, cy + hh * 1.5); g.closePath(); g.fill(); return; }
+  }
+  g.fillText(c, cx, cy + fontPx * 0.05);
+}
+function flush() {
+  const g = ctx;
+  for (let y = 0; y < rows; y++) {
+    const Y = y * chh, o = y * cols;
+    let x = 0;
+    while (x < cols) {
+      const c = BG[o + x];
+      let x2 = x + 1;
+      while (x2 < cols && BG[o + x2] === c) x2++;
+      g.fillStyle = css(c);
+      g.fillRect(x * cw, Y, (x2 - x) * cw, chh);
+      x = x2;
+    }
+  }
+  g.fillStyle = css(C.bg);
+  const th = Math.max(1, Math.round(dpr * 1.4));
+  for (let i = 0; i < SEAM.length; i++) if (SEAM[i]) {
+    const X = (i % cols) * cw, Y = ((i / cols) | 0) * chh;
+    if (SEAM[i] & 1) g.fillRect(X, Y, th, chh);
+    if (SEAM[i] & 2) g.fillRect(X, Y, cw, th);
+  }
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let pass = 0; pass < 2; pass++) {
+    g.font = (pass ? '700 ' : '400 ') + fontPx + 'px ' + FONT;
+    let last = -1;
+    for (let i = 0; i < CH.length; i++) {
+      const c = CH[i];
+      if (!c || BOLD[i] !== pass) continue;
+      if (FG[i] !== last) { last = FG[i]; g.fillStyle = css(last); }
+      glyph(g, c, (i % cols) * cw, ((i / cols) | 0) * chh);
+    }
+  }
+}
+function regions() {
+  const top = 2, H = rows - 1 - top;
+  if (cols < 64) {
+    const inspH = 5, main = { x: 0, y: top, w: cols, h: H - inspH - 1 };
+    return { narrow: true, main, strip: { y: top + main.h }, insp: { x: 0, y: top + main.h + 1, w: cols, h: inspH },
+             mapIn: { x: 1, y: top + 1, w: cols - 2, h: main.h - 2 } };
+  }
+  const leftW = cols >= 96 ? Math.max(38, Math.min(54, Math.round(cols * 0.36))) : 30;
+  const typesH = cols >= 96 ? 10 : 8, inspH = 6;
+  const map = { x: leftW + 1, y: top, w: cols - leftW - 1, h: H - inspH };
+  return { narrow: false,
+    files: { x: 0, y: top, w: leftW, h: H - typesH }, types: { x: 0, y: top + H - typesH, w: leftW, h: typesH },
+    map, insp: { x: leftW + 1, y: top + H - inspH, w: cols - leftW - 1, h: inspH },
+    mapIn: { x: map.x + 1, y: map.y + 1, w: map.w - 2, h: map.h - 2 } };
+}
+function resize(force) {
+  const avail = term.clientWidth - 26;
+  if (avail <= 0) return;
+  dpr = Math.max(1, window.devicePixelRatio || 1);
+  const f = Math.round((avail < 520 ? 11 : avail < 860 ? 12.5 : 14) * dpr * 2) / 2;
+  ctx.font = '400 ' + f + 'px ' + FONT;
+  const ncw = Math.max(4, Math.round(ctx.measureText('M').width || f * 0.6)), nch = Math.round(f * 1.42);
+  const ncols = Math.max(30, Math.min(160, Math.floor(avail * dpr / ncw)));
+  const nrows = ncols >= 64 ? 34 : 30;
+  if (!force && ncols === cols && nrows === rows && ncw === cw && nch === chh) return;
+  fontPx = f; cw = ncw; chh = nch; cols = ncols; rows = nrows; ASPECT = chh / cw; linePx = Math.max(1, Math.round(dpr));
+  cv.width = cols * cw; cv.height = rows * chh;
+  cv.style.width = (cols * cw / dpr) + 'px'; cv.style.height = (rows * chh / dpr) + 'px';
+  const n = cols * rows;
+  CH = new Array(n).fill(''); FG = new Int32Array(n); BG = new Int32Array(n); BOLD = new Uint8Array(n); SEAM = new Uint8Array(n);
+  R = regions();
+  relayout(disp.size ? 'routine' : 'instant');
+  paint(performance.now());   // setting the canvas size clears it, so redraw in the same task
+}
+
+// ---------- actions ----------
+function select(n) { sel = n; }
+function moveMap(dx, dy) {
+  const tiles = [];
+  for (const e of disp.values()) if (e.t.depth === 1 && !e.t.small) tiles.push(e.t);
+  if (!tiles.length) return;
+  const o = topTile();
+  if (!o) { select(tiles[0].node); return; }
+  let best = null, bd = Infinity, bo = -1;
+  for (const t of tiles) {
+    if (t === o) continue;
+    let d, ov;
+    if (dx) { d = dx > 0 ? t.x - (o.x + o.w) : o.x - (t.x + t.w); ov = Math.min(o.y + o.h, t.y + t.h) - Math.max(o.y, t.y); }
+    else { d = dy > 0 ? t.y - (o.y + o.h) : o.y - (t.y + t.h); ov = Math.min(o.x + o.w, t.x + t.w) - Math.max(o.x, t.x); }
+    if (d < 0 || ov <= 0) continue;
+    if (d < bd || (d === bd && ov > bo)) { best = t; bd = d; bo = ov; }
+  }
+  if (best) select(best.node);
+}
+function moveRow(d) {
+  const rs = listRows();
+  if (!rs.length) return;
+  let i = rs.findIndex(r => r.n === sel);
+  i = i < 0 ? 0 : Math.max(0, Math.min(rs.length - 1, i + d));
+  select(rs[i].n);
+}
+function drillIn(n) {
+  if (!n || !n.dir || !n.kids.length) return;
+  cwd = n; sel = n.kids[0]; expanded = new Set(); scroll = 0; legend = null;
+  relayout('nav', (tiles, old, e0, M) => {
+    const o = old.get(n.id);
+    if (!o) return null;
+    const r0 = lerpRect(o.from, o.t, e0);
+    if (r0.w < 1 || r0.h < 1) return null;
+    return { fwd: r => affine(r, M, r0), inv: r => affine(r, r0, M) };
+  });
+}
+function goUp() {
+  if (!cwd.parent) { flash = { t0: performance.now(), color: C.squash, msg: 'Top of the scan' }; return; }
+  const prev = cwd;
+  cwd = prev.parent; sel = prev; expanded = new Set(); scroll = 0; legend = null;
+  relayout('nav', (tiles, old, e0, M) => {
+    const t0 = tiles.find(t => t.key === prev.id);
+    if (!t0) return null;
+    return { fwd: r => affine(r, t0, M), inv: r => affine(r, M, t0) };
+  });
+}
+function removeNode(n) {
+  dissolve = null;
+  const p = n.parent;
+  if (!p) return;
+  const j = p.kids.indexOf(n);
+  if (j < 0) return;
+  const nxt = p.kids[j + 1] || p.kids[j - 1] || (p !== cwd ? p : null);
+  p.kids.splice(j, 1);
+  for (let a = p; a; a = a.parent) retotal(a);
+  freed += n.size; sel = nxt; legend = null;
+  relayout('routine');
+  flash = { t0: performance.now(), color: C.green, msg: 'Freed ' + fmt(n.size) };
+}
+function confirmDelete() {
+  const n = modal.node;
+  modal = null;
+  if (!reduced && disp.has(n.id)) dissolve = { node: n, t0: performance.now(), dur: T_DISSOLVE };
+  else removeNode(n);
+}
+function startScan() {
+  const now = performance.now();
+  if (reduced) { flash = { t0: now, color: C.green, msg: 'Scan complete' }; return; }
+  const r = rng(99 + cwd.id);
+  for (const k of cwd.kids) { k.s0 = 0.1 + r() * 0.45; k.s1 = Math.min(0.98, k.s0 + 0.22 + r() * 0.4); k.p = 0; }
+  scan = { root: cwd, t0: now, dur: 2400, last: 0, avg: 0 };
+  disp = new Map(); leaving = []; legend = null;
+}
+function tickScan(now) {
+  const tau = (now - scan.t0) / scan.dur;
+  if (tau >= 1) {
+    for (const k of scan.root.kids) k.p = 1;
+    scan = null; legend = null;
+    relayout('routine');
+    flash = { t0: now, color: C.green, msg: 'Scan complete' };
+    return;
+  }
+  if (now - scan.last < 140) return;
+  scan.last = now;
+  let a = 0, b = 0;
+  for (const k of scan.root.kids) {
+    const t = Math.max(0, Math.min(1, (tau - k.s0) / (k.s1 - k.s0)));
+    k.p = t * t * (3 - 2 * t);
+    a += k.size * k.p; b += k.size;
+  }
+  scan.avg = b ? a / b : 0;
+  legend = null;
+  relayout(disp.size ? 'routine' : 'reveal');
+}
+function key(k) {
+  lastInput = performance.now();
+  if (dissolve) return true;
+  if (modal) {
+    if (modal.kind === 'delete') {
+      if (k === 'y' || k === 'Y') confirmDelete();
+      else if (k === 'n' || k === 'N' || k === 'Escape' || k === 'q') modal = null;
+      else return false;
+    } else modal = null;
+    return true;
+  }
+  const files = focus === 'files';
+  switch (k) {
+    case 'ArrowLeft': case 'h':
+      if (!files) moveMap(-1, 0);
+      else if (sel && sel.dir && expanded.has(sel.id)) expanded.delete(sel.id);
+      else if (sel && sel.parent !== cwd) select(sel.parent);
+      break;
+    case 'ArrowRight': case 'l':
+      if (!files) moveMap(1, 0);
+      else if (sel && sel.dir && sel.kids.length) { if (expanded.has(sel.id)) select(sel.kids[0]); else expanded.add(sel.id); }
+      break;
+    case 'ArrowUp': case 'k': if (files) moveRow(-1); else moveMap(0, -1); break;
+    case 'ArrowDown': case 'j': if (files) moveRow(1); else moveMap(0, 1); break;
+    case 'Enter': drillIn(sel); break;
+    case 'Escape': goUp(); break;
+    case 'Tab': focus = files ? 'map' : 'files'; break;
+    case 'Backspace': case 'd': if (sel) modal = { kind: 'delete', node: sel }; break;
+    case 'r': startScan(); break;
+    case '?': modal = { kind: 'help' }; break;
+    default: return false;
+  }
+  return true;
+}
+
+// ---------- loop and wiring ----------
+let raf = 0, lastPaint = 0;
+function busy(now) {
+  return !!scan || !!dissolve || (anim.dur > 0 && now - anim.t0 < anim.dur + 40) || (!reduced && now - lastInput < SHEEN + 80) || (flash && now - flash.t0 < 2700);
+}
+function frame() {
+  raf = 0;
+  const now = performance.now();
+  if (now - lastPaint < 28) { raf = requestAnimationFrame(frame); return; }
+  lastPaint = now;
+  if (scan) tickScan(now);
+  if (dissolve && now - dissolve.t0 >= dissolve.dur) removeNode(dissolve.node);
+  paint(now);
+  if (busy(now)) raf = requestAnimationFrame(frame);
+}
+function dirty() { if (!raf) raf = requestAnimationFrame(frame); }
+
+const keyY = document.getElementById('key-y'), keyN = document.getElementById('key-n');
+const kbdState = document.getElementById('kbd-state');
+document.getElementById('sample-size').textContent = 'about ' + fmt(ROOT.size);
+
+term.addEventListener('keydown', ev => {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.key === 'Tab' && ev.shiftKey) return;
+  if (key(ev.key)) { ev.preventDefault(); dirty(); }
+});
+term.addEventListener('focus', () => { kbdState.textContent = 'Keyboard active. Shift+Tab leaves the terminal.'; });
+term.addEventListener('blur', () => { kbdState.textContent = 'Click the terminal to use the keyboard'; });
+for (const b of document.querySelectorAll('.keys button')) b.addEventListener('click', () => { key(b.dataset.k); dirty(); });
+cv.addEventListener('pointerdown', ev => {
+  const rect = cv.getBoundingClientRect();
+  if (!rect.width || !cols) return;
+  const x = Math.floor((ev.clientX - rect.left) / rect.width * cols), y = Math.floor((ev.clientY - rect.top) / rect.height * rows);
+  lastInput = performance.now();
+  if (dissolve) return;
+  if (modal) { if (modal.kind !== 'delete') modal = null; dirty(); return; }
+  const showFiles = !R.narrow || focus === 'files', showMap = !R.narrow || focus === 'map';
+  const inFiles = showFiles && filesIn && x >= filesIn.x && x < filesIn.x + filesIn.w && y >= filesIn.y && y < filesIn.y + filesIn.h;
+  const M = R.mapIn, inMap = showMap && x >= M.x && x < M.x + M.w && y >= M.y && y < M.y + M.h;
+  if (inFiles) {
+    const row = hitRows.find(r => r.y === y);
+    focus = 'files';
+    if (row) { if (row.n === sel) drillIn(row.n); else select(row.n); }
+  } else if (inMap) {
+    focus = 'map';
+    for (const en of disp.values()) {
+      const t = en.t;
+      if (t.depth === 1 && !t.small && x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h) {
+        if (t.node === sel) drillIn(t.node); else select(t.node);
+        break;
+      }
+    }
+  }
+  dirty();
+});
+if (mq && mq.addEventListener) mq.addEventListener('change', e => { reduced = e.matches; dirty(); });
+if (window.ResizeObserver) new ResizeObserver(() => resize(false)).observe(term);
+window.addEventListener('resize', () => resize(false));
+resize(true);
+dirty();
+if (document.fonts && document.fonts.load) {
+  Promise.all([document.fonts.load('400 14px "JetBrains Mono"'), document.fonts.load('700 14px "JetBrains Mono"')])
+    .then(() => { resize(true); dirty(); }).catch(() => {});
+}
+})();
+</script>

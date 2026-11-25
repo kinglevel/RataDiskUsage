@@ -1,0 +1,21 @@
+[package]
+name = "ratadiskusage"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal disk usage analyzer with a file-type treemap, a file browser and live scanning"
+repository = "https://github.com/kinglevel/RataDiskUsage"
+keywords = ["disk-usage", "tui", "treemap", "ratatui", "du"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "radu"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30"
+unicode-width = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
